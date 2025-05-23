@@ -1,0 +1,214 @@
+#include <Arduino.h>
+#include <BluetoothSerial.h>
+
+// 硬件配置
+#define JOY_X_PIN 0      // ADC1_CH0
+#define JOY_Y_PIN 1      // ADC1_CH1
+#define JOY_BTN_PIN 3    // GPIO3
+#define SERVO_PIN 6      // GPIO6
+#define MOTOR_A 7        // GPIO7
+#define MOTOR_B 8        // GPIO8
+#define LED_PIN 10       // 板载LED引脚（根据实际开发板调整）
+
+// 蓝牙配置
+BluetoothSerial SerialBT;
+const char* partnerName = "ESP32C3_Partner"; // 对方设备名称
+bool isServer = false;  // 通过跳线或按钮设置角色
+
+// 控制参数（紧凑结构体）
+#pragma pack(push, 1)
+struct ControlData {
+  int16_t xValue;      // X轴(-512~511)
+  int16_t yValue;      // Y轴(-512~511)
+  uint8_t btnState;    // 按钮状态
+  uint32_t timestamp;  // 时间戳
+  uint16_t crc;        // CRC校验值
+};
+#pragma pack(pop)
+
+// 全局变量
+ControlData localData;
+ControlData remoteData;
+bool isConnected = false;
+
+// 初始化PWM
+void initPWM() {
+  // 舵机通道（50Hz）
+  ledcSetup(0, 50, 16);
+  ledcAttachPin(SERVO_PIN, 0);
+  
+  // 电机通道（5kHz）
+  ledcSetup(1, 5000, 8);  // 电机A
+  ledcSetup(2, 5000, 8);  // 电机B（新增通道）
+  ledcAttachPin(MOTOR_A, 1);
+  ledcAttachPin(MOTOR_B, 2);
+}
+
+// CRC-16计算（Modbus）
+uint16_t calculateCRC(const uint8_t* data, size_t length) {
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < length; i++) {
+    crc ^= data[i];
+    for (int j = 0; j < 8; j++) {
+      if (crc & 0x0001) {
+        crc = (crc >> 1) ^ 0xA001;
+      } else {
+        crc >>= 1;
+      }
+    }
+  }
+  return crc;
+}
+
+// 读取摇杆数据
+void readJoystick() {
+  localData.xValue = analogRead(JOY_X_PIN) - 2048;
+  localData.yValue = analogRead(JOY_Y_PIN) - 2048;
+  localData.btnState = digitalRead(JOY_BTN_PIN);
+  localData.timestamp = millis();
+  
+  // 计算CRC（排除CRC字段自身）
+  uint8_t* dataPtr = (uint8_t*)&localData;
+  localData.crc = calculateCRC(dataPtr, sizeof(localData)-2);
+}
+
+// 蓝牙回调
+void btCallback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
+  if(event == ESP_SPP_SRV_OPEN_EVT || event == ESP_SPP_OPEN_EVT){
+    isConnected = true;
+    Serial.println("Connected to partner");
+    digitalWrite(LED_PIN, HIGH); // 连接成功LED常亮
+  }
+  if(event == ESP_SPP_CLOSE_EVT ){
+    isConnected = false;
+    Serial.print
+
+digitalWrite(LED_PIN, HIGH); // 连接成功LED常亮
+  }
+  if(event == ESP_SPP_CLOSE_EVT ){
+    isConnected = false;
+    Serial.println("Disconnected");
+    digitalWrite(LED_PIN, LOW); // 断开连接关闭LED
+  }
+}
+
+// 发送控制数据
+void sendControlData() {
+  static uint32_t lastSend = 0;
+  if(millis() - lastSend > 20 && isConnected) { // 50Hz发送频率
+    SerialBT.write((uint8_t*)&localData, sizeof(localData));
+    lastSend = millis();
+  }
+}
+
+// 接收处理数据
+void processReceivedData() {
+  if(SerialBT.available() >= sizeof(remoteData)){
+    SerialBT.readBytes((uint8_t*)&remoteData, sizeof(remoteData));
+    
+    // CRC校验
+    uint8_t* dataPtr = (uint8_t*)&remoteData;
+    uint16_t receivedCRC = remoteData.crc;
+    remoteData.crc = 0; // 清零用于计算
+    uint16_t calcCRC = calculateCRC(dataPtr, sizeof(remoteData)-2);
+    
+    if(receivedCRC != calcCRC){
+      Serial.println("CRC Error!");
+      return;
+    }
+    
+    // 镜像控制
+    int angle = map(remoteData.xValue, -512, 511, -45, 45);
+    int speed = map(remoteData.yValue, -512, 511, -255, 255);
+    
+    // 控制舵机
+    uint32_t pulseWidth = 1500 + (angle * 1000.0 / 90.0);
+    ledcWrite(0, (pulseWidth * (1 << 16)) / 20000);
+    
+    // 控制电机
+    if(speed > 0){
+      ledcWrite(1, abs(speed)); // 通道1
+      ledcWrite(2, 0);          // 通道2
+    } else {
+      ledcWrite(1, 0);          // 通道1
+      ledcWrite(2, abs(speed)); // 通道2
+    }
+  }
+}
+
+// 本地设备控制
+void controlLocal() {
+  int angle = map(localData.xValue, -512, 511, -45, 45);
+  int speed = map(localData.yValue, -512, 511, -255, 255);
+  
+  // 控制舵机
+  uint32_t pulseWidth = 1500 + (angle * 1000.0 / 90.0);
+  ledcWrite(0, (pulseWidth * (1 << 16)) / 20000);
+  
+  // 控制电机
+  if(speed > 0){
+    ledcWrite(1, abs(speed));
+    ledcWrite(2, 0);
+  } else {
+    ledcWrite(1, 0);
+    ledcWrite(2, abs(speed));
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  
+  // 初始化硬件
+  pinMode(JOY_BTN_PIN, INPUT_PULLUP);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+  initPWM();
+  
+  // 配置蓝牙角色
+  if(isServer){
+    SerialBT.begin("ESP32C3_Server"); 
+    Serial.println("Running as Server");
+  
+}
+else{
+    SerialBT.begin("ESP32C3_Client");
+    Serial.println("Running as Client");
+  }
+  SerialBT.register_callback(btCallback);
+  
+  // 客户端主动连接
+  if(!isServer){
+    Serial.println("Searching Partner...");
+    if(SerialBT.connect(partnerName)){
+      isConnected = true;
+      digitalWrite(LED_PIN, HIGH);
+    }
+  }
+}
+
+void loop() {
+  static uint32_t ledTimer = 0;
+  
+  // LED状态指示
+  if(!isConnected && millis() - ledTimer > 200){
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+    ledTimer = millis();
+  }
+
+  readJoystick();
+  controlLocal();
+  
+  if(isConnected){
+    sendControlData();
+    processReceivedData();
+  }
+  
+  // 按钮紧急停止
+  if(localData.btnState == LOW){
+    ledcWrite(1, 0);
+    ledcWrite(2, 0);
+    while(digitalRead(JOY_BTN_PIN) == LOW) delay(10);
+  }
+  
+  delay(10);
+}
