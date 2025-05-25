@@ -10,8 +10,6 @@ This project is the "Innovative Future" project developed by CYEZ High School.We
 
 We, the WT group, are hereby open-sourcing all code files and some project documents to help everyone learn and point out issues.The project will continuously iterate and develop over the next six months. We hope to receive assistance from anyone. Thank you!
 
-    The english version of the wiki is on the way.
-
 # Contact 
 Project Open Source Leader: Octopus
 
