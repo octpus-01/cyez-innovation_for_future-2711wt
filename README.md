@@ -5,6 +5,15 @@
 
 [![wakatime](https://wakatime.com/badge/user/06e56467-701d-4a24-b8e2-7866e9d233cb/project/dfd05f5e-227a-4e7d-a2be-ba774e30ff5c.svg)](https://wakatime.com/badge/user/06e56467-701d-4a24-b8e2-7866e9d233cb/project/dfd05f5e-227a-4e7d-a2be-ba774e30ff5c)
 
+# **attention**
+This project is under development.
+This branch is the dev branch. 
+We are continuously developing.
+dev branch has mainly changed the code structure
+we will use wifi to connect to the ship. 
+
+
+
 # Basic Information
 This project is the "Innovative Future" project developed by CYEZ High School.We will develop a ship as the work of this project in groups from April 2025 to May 2025.
 
